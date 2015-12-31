@@ -3,27 +3,19 @@
 
 #define DEBUG
 
-#ifdef DEBUG
- #define DBG_PRINT(x)  Serial.println (x)
-#else
- #define DBG_PRINT(x)
-#endif
+
 
 
 #include <ESP8266WiFi.h>
 #include <max6675.h>
 #include "Adafruit_IO_Client.h"
 
+#ifndef mycommon
+  #include <My_Common.h>
+#endif
+
 #define sleep_mins 10
 #define numSample 5
-
-// Configure WiFi access point details.
-#define WLAN_SSID  "dd-wrt_vap"
-#define WLAN_PASS  "...your password..."
-
-// Configure Adafruit IO access.
-#define AIO_KEY         "d26ee06b8f491a94bb90b7db2768786947ce29c6"
-#define AIO_FEEDNAME    "sauna_temp"
 
 // Configure the max6675 pins
 #define pinVcc 15
