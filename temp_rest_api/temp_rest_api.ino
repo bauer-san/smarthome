@@ -3,9 +3,6 @@
 
 #define DEBUG
 
-
-
-
 #include <ESP8266WiFi.h>
 #include <max6675.h>
 #include "Adafruit_IO_Client.h"
@@ -14,22 +11,25 @@
   #include <My_Common.h>
 #endif
 
-#define sleep_mins 10
-#define numSample 5
+#define sleep_mins_long 10
+#define sleep_mins_short 1
+#define numSample 3
+#define tempThr 80.0
+#define delay_get_temp_ms 500
 
-// Configure the max6675 pins
-#define pinVcc 15
-//#define pinGnd 2  // not used
+// Configure the max6675
+#define pinVcc_MAX6755 15
+#define pinCS_MAX6755 5
 
 // Configure the SPI.
 #define pinDO 4
-#define pinCS 5
 #define pinCLK 14
 
-#define sleep_us (sleep_mins * 60 * 1E6)
+#define sleep_us_long (sleep_mins_long * 60 * 1E6)
+#define sleep_us_short (sleep_mins_short * 60 * 1E6)
 
 // Create thermocouple instance of max6675
-MAX6675 thermocouple(pinCLK, pinCS, pinDO);
+MAX6675 thermocouple(pinCLK, pinCS_MAX6755, pinDO);
 
 // Create an ESP8266 WiFiClient class to connect to the AIO server.
 WiFiClient client;
@@ -55,24 +55,24 @@ void setup() {
   Serial.println(F("Read from MAX6675 and post to Adafruit IO using ESP8266!"));
 
   // Connect to WiFi access point.
-  Serial.print("Connecting to ");
+  Serial.print(F("Connecting to "));
   Serial.println(WLAN_SSID);
 
   WiFi.begin(WLAN_SSID, WLAN_PASS);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
+    Serial.print(F("."));
   }
+  
   Serial.println();
-
-  Serial.print("WiFi connected as IP address: "); Serial.println(WiFi.localIP());
+  Serial.print(F("WiFi connected as IP address: ")); Serial.println(WiFi.localIP());
   
   // Initialize the Adafruit IO client class (not strictly necessary with the
   // client class, but good practice).
   aio.begin();
 
   // Set up max6675 power pin and turn it on
-  pinMode(pinVcc, OUTPUT); digitalWrite(pinVcc, HIGH);
+  pinMode(pinVcc_MAX6755, OUTPUT); digitalWrite(pinVcc_MAX6755, HIGH);
   
   Serial.println(F("Ready!"));  
 }
@@ -83,13 +83,13 @@ void loop() {
 
   //Read samples
   for (i=0;i<Nsamples;i++) {
-    delay(1000);
+    delay(delay_get_temp_ms);
     // Sum the temperature readings
     tempF += thermocouple.readFahrenheit();
   }
 
   //Turn off the max6675
-  digitalWrite(pinVcc, LOW);
+  digitalWrite(pinVcc_MAX6755, LOW);
 
   // Simple average
   feedtemp = (tempF/Nsamples);
@@ -102,7 +102,14 @@ void loop() {
     Serial.println(F("Error writing value to feed!"));
   }
 
-  ESP.deepSleep(sleep_us, WAKE_RF_DEFAULT);
+  if (feedtemp >= tempThr) {
+    Serial.println(F("Short sleep"));
+    ESP.deepSleep(sleep_us_short, WAKE_RF_DEFAULT);
+  } else {
+    Serial.println(F("Long sleep"));    
+    ESP.deepSleep(sleep_us_long, WAKE_RF_DEFAULT);
+  }
+  
   delay(1000);
 
 }
