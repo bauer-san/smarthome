@@ -11,11 +11,13 @@
   #include <My_Common.h>
 #endif
 
-#define sleep_mins_long 10
-#define sleep_mins_short 1
-#define numSample 3
-#define tempThr 80.0
+#define sleep_mins 1
+#define avgSAMPLES 3
+#define tempRADIO_ON 100.0
+#define tempSAUNA_READY 180.0
 #define delay_get_temp_ms 500
+#define READY 1
+#define UNREADY 0
 
 // Configure the max6675
 #define pinVcc_MAX6755 15
@@ -25,8 +27,7 @@
 #define pinDO 4
 #define pinCLK 14
 
-#define sleep_us_long (sleep_mins_long * 60 * 1E6)
-#define sleep_us_short (sleep_mins_short * 60 * 1E6)
+#define sleep_us (sleep_mins * 60 * 1E6)
 
 // Create thermocouple instance of max6675
 MAX6675 thermocouple(pinCLK, pinCS_MAX6755, pinDO);
@@ -45,31 +46,18 @@ Adafruit_IO_Client aio = Adafruit_IO_Client(client, AIO_KEY);
 // it at least the name of the feed, and optionally a specific AIO key to use
 // when accessing the feed (the default is to use the key set on the
 // Adafruit_IO_Client class).
-Adafruit_IO_Feed testFeed = aio.getFeed(AIO_FEEDNAME);
+Adafruit_IO_Feed tempFeed = aio.getFeed(AIO_FEEDNAME_SAUNA_TEMP);
+Adafruit_IO_Feed readyFeed = aio.getFeed(AIO_FEEDNAME_SAUNA_READY);
 
 void setup() {
   // Setup serial port access.
   Serial.begin(115200);
   delay(10);
+  
   Serial.println(); Serial.println();
-  Serial.println(F("Read from MAX6675 and post to Adafruit IO using ESP8266!"));
-
-  // Connect to WiFi access point.
-  Serial.print(F("Connecting to "));
-  Serial.println(WLAN_SSID);
-
-  WiFi.begin(WLAN_SSID, WLAN_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(F("."));
-  }
-  
-  Serial.println();
-  Serial.print(F("WiFi connected as IP address: ")); Serial.println(WiFi.localIP());
-  
-  // Initialize the Adafruit IO client class (not strictly necessary with the
-  // client class, but good practice).
-  aio.begin();
+  Serial.println(F("**********************************************************************"));
+  Serial.println(F("Read from MAX6675 and conditionally post to Adafruit IO using ESP8266!"));
+  Serial.println(F("**********************************************************************"));
 
   // Set up max6675 power pin and turn it on
   pinMode(pinVcc_MAX6755, OUTPUT); digitalWrite(pinVcc_MAX6755, HIGH);
@@ -78,8 +66,8 @@ void setup() {
 }
 
 void loop() {
-  double tempF=0.0, feedtemp=0.0;
-  char i, Nsamples = numSample;
+  double tempF=0.0, AvgtempF=0.0, LBO_tempF;
+  char i, Nsamples = avgSAMPLES;
 
   //Read samples
   for (i=0;i<Nsamples;i++) {
@@ -92,24 +80,79 @@ void loop() {
   digitalWrite(pinVcc_MAX6755, LOW);
 
   // Simple average
-  feedtemp = (tempF/Nsamples);
-  Serial.print(F("feedtmp: ")); Serial.println(feedtemp, DEC);
+  AvgtempF = (tempF/Nsamples);
+  Serial.print(F("feedtmp: ")); Serial.println(AvgtempF, DEC);
 
-  if (testFeed.send(feedtemp)) {
-    Serial.print(F("Wrote value to feed: ")); Serial.println(feedtemp, DEC);
-  }
-  else {
-    Serial.println(F("Error writing value to feed!"));
-  }
+  /*******************************************************************************************************/
+  /* Extend the battery life by only turning on the wifi radio when the temperature is above a threshold */
+  /*******************************************************************************************************/
+  if (AvgtempF >= tempRADIO_ON) {
 
-  if (feedtemp >= tempThr) {
-    Serial.println(F("Short sleep"));
-    ESP.deepSleep(sleep_us_short, WAKE_RF_DEFAULT);
-  } else {
-    Serial.println(F("Long sleep"));    
-    ESP.deepSleep(sleep_us_long, WAKE_RF_DEFAULT);
-  }
+    // Turn on the WiFi radio and assume that it worked (like in the examples)
+    WiFi.mode(WIFI_STA);
+    delay(500);
+
+    // Connect to WiFi access point.
+    Serial.print(F("Connecting to "));
+    Serial.println(WLAN_SSID);
   
+    WiFi.begin(WLAN_SSID, WLAN_PASS);
+    delay(2000);  // Increasing this seems to improve the reliability of the connection
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(F("."));
+    }
+  
+    Serial.println();
+    Serial.print(F("WiFi connected as IP address: ")); Serial.println(WiFi.localIP());
+  
+    // Initialize the Adafruit IO client class (not strictly necessary with the
+    // client class, but good practice).
+    aio.begin();
+
+    FeedData lastTemp = tempFeed.receive();
+    
+    delay(1000);
+    
+    if (lastTemp.isValid()) {
+      Serial.print(F("Received value from tempFeed: ")); Serial.println(lastTemp);
+      if (lastTemp.doubleValue(&LBO_tempF)) {
+        Serial.print(F("Same value as an int: ")); Serial.println(LBO_tempF, DEC);  
+        if (AvgtempF > tempSAUNA_READY) {       // Is hot enough
+          if (LBO_tempF < tempSAUNA_READY) {    // Wasn't hot before now
+            if (readyFeed.send(READY)) {        // Now ready!
+              Serial.print(F("Wrote value to readyFeed: ")); Serial.println(READY, DEC);
+            } else {
+              Serial.println(F("Error writing READY value to readyFeed!"));
+            }
+          } else {                                // Was already hot
+            if (readyFeed.send(UNREADY)) {        // Still hot but call it UNREADY because of usage of readyFeed!
+              Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
+            } else {
+              Serial.println(F("Error writing UNREADY value to readyFeed!"));
+            }
+          }
+        } else {                                  // Is not hot enough.
+          if (readyFeed.send(UNREADY)) {
+            Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
+          } else {
+            Serial.println(F("Error writing UNREADY value to readyFeed!"));
+          }
+        }
+      }
+    } else {
+      Serial.print(F("Failed to receive the latest feed value!"));
+    }
+
+    if (tempFeed.send(AvgtempF)) {
+      Serial.print(F("Wrote value to tempFeed: ")); Serial.println(AvgtempF, DEC);
+    } else {
+      Serial.println(F("Error writing value to tempFeed!"));
+    }
+  }
+
+  Serial.println(F("Going to sleep"));
+  ESP.deepSleep(sleep_us, WAKE_RF_DISABLED);
   delay(1000);
 
 }
