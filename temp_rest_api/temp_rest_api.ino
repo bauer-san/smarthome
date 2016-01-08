@@ -13,8 +13,15 @@
 
 #define sleep_mins 1
 #define avgSAMPLES 3
-#define tempRADIO_ON 100.0
-#define tempSAUNA_READY 180.0
+#if (0)
+  #define tempRADIO_ON 50.0      //100.0
+  #define tempSAUNA_HOT 75.0   //185.0
+  #define tempSAUNA_COOL 70.0 //160.0
+#else
+  #define tempRADIO_ON      100.0
+  #define tempSAUNA_HOT   185.0
+  #define tempSAUNA_COOL 160.0
+#endif
 #define delay_get_temp_ms 500
 #define READY 1
 #define UNREADY 0
@@ -68,7 +75,8 @@ void setup() {
 void loop() {
   double tempF=0.0, AvgtempF=0.0, LBO_tempF;
   char i, Nsamples = avgSAMPLES;
-
+  int LBO_ready;
+  
   //Read samples
   for (i=0;i<Nsamples;i++) {
     delay(delay_get_temp_ms);
@@ -110,47 +118,49 @@ void loop() {
     // client class, but good practice).
     aio.begin();
 
+    // Get the previous TEMPerature
     FeedData lastTemp = tempFeed.receive();
-    
-    delay(1000);
-    
     if (lastTemp.isValid()) {
       Serial.print(F("Received value from tempFeed: ")); Serial.println(lastTemp);
       if (lastTemp.doubleValue(&LBO_tempF)) {
-        Serial.print(F("Same value as an int: ")); Serial.println(LBO_tempF, DEC);  
-        if (AvgtempF > tempSAUNA_READY) {       // Is hot enough
-          if (LBO_tempF < tempSAUNA_READY) {    // Wasn't hot before now
-            if (readyFeed.send(READY)) {        // Now ready!
-              Serial.print(F("Wrote value to readyFeed: ")); Serial.println(READY, DEC);
-            } else {
-              Serial.println(F("Error writing READY value to readyFeed!"));
-            }
-          } else {                                // Was already hot
-            if (readyFeed.send(UNREADY)) {        // Still hot but call it UNREADY because of usage of readyFeed!
-              Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
-            } else {
-              Serial.println(F("Error writing UNREADY value to readyFeed!"));
-            }
-          }
-        } else {                                  // Is not hot enough.
-          if (readyFeed.send(UNREADY)) {
-            Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
-          } else {
-            Serial.println(F("Error writing UNREADY value to readyFeed!"));
-          }
-        }
+        Serial.print(F("Same value as an double: ")); Serial.println(LBO_tempF, DEC);
       }
-    } else {
-      Serial.print(F("Failed to receive the latest feed value!"));
     }
 
+    // Get the previous state
+    FeedData lastReady = readyFeed.receive();    
+    if (lastReady.isValid()) {
+      Serial.print(F("Received value from readyFeed: ")); Serial.println(lastReady);
+      if (lastReady.intValue(&LBO_ready)) {
+        Serial.print(F("Same value as an int: ")); Serial.println(LBO_ready, DEC);
+      }
+    }
+
+    // Write the new TEMP
     if (tempFeed.send(AvgtempF)) {
       Serial.print(F("Wrote value to tempFeed: ")); Serial.println(AvgtempF, DEC);
     } else {
       Serial.println(F("Error writing value to tempFeed!"));
     }
-  }
 
+    // Decide if the readyFeed should be updated
+    if (   (LBO_ready == UNREADY)
+        && (AvgtempF > tempSAUNA_HOT))   {// Is hot enough
+        if (readyFeed.send(READY)) {        // Now ready!
+          Serial.print(F("Wrote value to readyFeed: ")); Serial.println(READY, DEC);
+        } else {
+          Serial.println(F("Error writing READY value to readyFeed!"));
+        }
+    }
+    if  (AvgtempF <= tempSAUNA_COOL)  {
+      if (readyFeed.send(UNREADY)) {
+        Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
+      } else {
+        Serial.println(F("Error writing UNREADY value to readyFeed!"));
+      }
+    }
+  }
+  
   Serial.println(F("Going to sleep"));
   ESP.deepSleep(sleep_us, WAKE_RF_DISABLED);
   delay(1000);
