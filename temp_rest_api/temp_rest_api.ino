@@ -2,6 +2,8 @@
 //
 
 #define DEBUG
+#define SUPER_SAVER   1
+#define BENCH_DEBUG   0
 
 #include <ESP8266WiFi.h>
 #include <max6675.h>
@@ -12,15 +14,17 @@
 #endif
 
 #define sleep_mins 1
+#define sleep_us (sleep_mins * 60 * 1E6)
 #define avgSAMPLES 3
-#if (0)
-  #define tempRADIO_ON 50.0      //100.0
-  #define tempSAUNA_HOT 75.0   //185.0
-  #define tempSAUNA_COOL 70.0 //160.0
+
+#if (BENCH_DEBUG)
+  #define tempRADIO_ON       50.0      //150.0
+  #define tempSAUNA_COOL     70.0      //160.0
+  #define tempSAUNA_HOT      75.0      //185.0
 #else
-  #define tempRADIO_ON      100.0
-  #define tempSAUNA_HOT   185.0
-  #define tempSAUNA_COOL 160.0
+  #define tempRADIO_ON      150.0
+  #define tempSAUNA_COOL    160.0
+  #define tempSAUNA_HOT     185.0
 #endif
 #define delay_get_temp_ms 500
 #define READY 1
@@ -33,8 +37,6 @@
 // Configure the SPI.
 #define pinDO 4
 #define pinCLK 14
-
-#define sleep_us (sleep_mins * 60 * 1E6)
 
 // Create thermocouple instance of max6675
 MAX6675 thermocouple(pinCLK, pinCS_MAX6755, pinDO);
@@ -118,6 +120,7 @@ void loop() {
     // client class, but good practice).
     aio.begin();
 
+#if SUPER_SAVER
     // Get the previous TEMPerature
     FeedData lastTemp = tempFeed.receive();
     if (lastTemp.isValid()) {
@@ -127,6 +130,14 @@ void loop() {
       }
     }
 
+    // Write the new TEMP
+    if (tempFeed.send(AvgtempF)) {
+      Serial.print(F("Wrote value to tempFeed: ")); Serial.println(AvgtempF, DEC);
+    } else {
+      Serial.println(F("Error writing value to tempFeed!"));
+    }
+#endif
+
     // Get the previous state
     FeedData lastReady = readyFeed.receive();    
     if (lastReady.isValid()) {
@@ -135,28 +146,22 @@ void loop() {
         Serial.print(F("Same value as an int: ")); Serial.println(LBO_ready, DEC);
       }
     }
-
-    // Write the new TEMP
-    if (tempFeed.send(AvgtempF)) {
-      Serial.print(F("Wrote value to tempFeed: ")); Serial.println(AvgtempF, DEC);
-    } else {
-      Serial.println(F("Error writing value to tempFeed!"));
-    }
-
+    
     // Decide if the readyFeed should be updated
     if (   (LBO_ready == UNREADY)
         && (AvgtempF > tempSAUNA_HOT))   {// Is hot enough
-        if (readyFeed.send(READY)) {        // Now ready!
+        if (readyFeed.send(READY)) {        // report READY!
           Serial.print(F("Wrote value to readyFeed: ")); Serial.println(READY, DEC);
         } else {
           Serial.println(F("Error writing READY value to readyFeed!"));
         }
-    }
-    if  (AvgtempF <= tempSAUNA_COOL)  {
-      if (readyFeed.send(UNREADY)) {
-        Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
-      } else {
-        Serial.println(F("Error writing UNREADY value to readyFeed!"));
+    } else { //(LBO_ready == READY)
+      if  (AvgtempF <= tempSAUNA_COOL)  {   // cooling off or warming up
+        if (readyFeed.send(UNREADY)) {      // report UNREADY
+          Serial.print(F("Wrote value to readyFeed: ")); Serial.println(UNREADY, DEC);
+        } else {
+          Serial.println(F("Error writing UNREADY value to readyFeed!"));
+        }
       }
     }
   }
